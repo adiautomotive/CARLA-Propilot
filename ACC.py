@@ -11,7 +11,7 @@ Allows controlling a vehicle with a keyboard.
 
 Adaptive Cruise Control (ACC):
   - Press F2 to toggle ACC.
-  - Press F3 to explicitly disable ACC.
+  - Press F3 to explicitly disable ACC.A
   - When enabled and a lead vehicle is present, the vehicle will try to follow the
     lead vehicle by matching its speed and maintaining a constant gap.
     
