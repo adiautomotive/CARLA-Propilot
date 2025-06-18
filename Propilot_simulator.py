@@ -165,7 +165,9 @@ class DualControl(object):
 
     def _parse_wheel(self):
         numAxes = self._joystick.get_numaxes()
+        ButtonKeys = self._joystick.get_numbuttons()
         jsInputs = [float(self._joystick.get_axis(i)) for i in range(numAxes)]
+        jsButton = [float(self._joystick.get_button(i)) for i in range(ButtonKeys)]
         
         steerCmd = 1.0 * math.tan(1.1 * jsInputs[0])
         throttleCmd = 0.0
@@ -390,6 +392,13 @@ def game_loop(args, client):
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE): return
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == 0:
+                        if p_key_press_time is None: p_key_press_time = pygame.time.get_ticks()
+
+                
+                
+                
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_p:
                         if p_key_press_time is None: p_key_press_time = pygame.time.get_ticks()
