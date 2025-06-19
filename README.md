@@ -10,7 +10,7 @@ This project is an Advanced Driver-Assistance Systems (ADAS) testbed developed i
 
 The simulation allows for testing the ADAS controllers under various configurable scenarios, including vehicle cut-ins, stop-and-go traffic, and degraded lane markings. It includes a pre-simulation GUI for selecting vehicles and weather conditions, and provides a clear on-screen HUD for monitoring the ADAS state.
 
-This simulator was developed by **Adithya Govindarajan** and **Pradeepa Hari**.
+This simulator was developed by **Adithya Govindarajan**
 
 ## Features
 
