@@ -1,4 +1,3 @@
-```python
 """
 CARLA LKA and ACC Testbed with ProPILOT-style State Machine
 
@@ -331,7 +330,7 @@ class World:
         self = weak_self()
         if not self: return
         array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
-        self.surface = pygame.surfarray.make_surface(array[:, :, :3].swapaxes(0, 1))
+        self.surface = pygame.surfarray.make_surface(array[:, :, :3][:, :, ::-1].swapaxes(0, 1)) # BGRA → RGB
     def render(self, display):
         if self.surface: display.blit(self.surface, (0, 0))
     def destroy(self):
