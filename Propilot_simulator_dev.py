@@ -23,6 +23,8 @@ import pygame
 import argparse
 from enum import Enum
 import math
+import sys
+# Add CARLA PythonAPI path (Update this path if needed)
 
 # ==============================================================================
 # -- ADAS State Machine & Pre-sim GUI ------------------------------------------
@@ -137,7 +139,7 @@ class DualControl(object):
         self._steer_cache = 0.0
         self._joystick = None
         if pygame.joystick.get_count() > 0:
-            self._joystick = pygame.joystick.Joystick(0)
+            self._joystick = pygame.joystick.Joystick(1)
             self._joystick.init()
             print("Detected Joystick: %s" % self._joystick.get_name())
 
@@ -167,21 +169,26 @@ class DualControl(object):
         ButtonKeys = self._joystick.get_numbuttons()
         jsInputs = [float(self._joystick.get_axis(i)) for i in range(numAxes)]
         jsButton = [float(self._joystick.get_button(i)) for i in range(ButtonKeys)]
-        steer_index = 0
-        throttle_index = 1
+        steer_index = 3 #0
+        throttle_index = 1 #1
         brake_index = 2
         
         steerCmd = 1.0 * math.tan(1.1 * jsInputs[steer_index])
         throttleCmd = 0.0
         if jsInputs[throttle_index] < 0.9:
-            throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_index] + 1.4) - 1.2) / 0.92
-            if throttleCmd < 0: throttleCmd = 0.0
-            elif throttleCmd > 1: throttleCmd = 1.0
+            throttleCmd = jsInputs[throttle_index]
+            # throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_index] + 1.4) - 1.2) / 0.92
+            # if throttleCmd < 0: throttleCmd = 0.0
+            # elif throttleCmd > 1: throttleCmd = 1.0
+        # if jsInputs[throttle_index] < 1.9:
+        #     throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_index] + 1.4) - 1.2) / 0.92
+        #     if throttleCmd < 0: throttleCmd = 0.0
+        #     elif throttleCmd > 1: throttleCmd = 1.0
 
         brakeCmd = 0.0
-        if jsInputs[brake_index] < 0.9:
-            # brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[2] + 1.4) - 1.2) / 0.92
-            brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * max(0,jsInputs[2]) + 1.4) - 1.2) / 0.92
+        if jsInputs[brake_index] < -1.9:
+            brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[2] + 1.4) - 1.2) / 0.92
+            # brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * max(0,jsInputs[2]) + 1.4) - 1.2) / 0.92
             if brakeCmd < 0: brakeCmd = 0.0
             elif brakeCmd > 1: brakeCmd = 1.0
         
@@ -287,6 +294,7 @@ class ScenarioManager:
             state, path = vehicle_dict.get('state'), vehicle_dict.get('path')
             steer = self.npc_controller.run_step(vehicle, path) if path else 0.0
             throttle, brake = 0.6, 0.0
+            
 
             if self.current_scenario_index == 2: # Cut-in
                 if vehicle is self.cut_in_vehicle and state == "OVERTAKING":
@@ -311,6 +319,88 @@ class ScenarioManager:
                     if pygame.time.get_ticks() - vehicle_dict.get('start_time', 0) > 3000: vehicle_dict['state'], vehicle_dict['start_time'] = "DRIVING_STOP_GO", pygame.time.get_ticks()
             
             vehicle.apply_control(carla.VehicleControl(throttle=throttle, steer=steer, brake=brake))
+
+sys.path.append('/home/jesudara/carla_dev/carla/PythonAPI/carla')
+from agents.navigation.global_route_planner import GlobalRoutePlanner
+
+class WaypointNavigator:
+    def __init__(self, world, vehicle, resolution=1.0, max_steer_degrees=40, speed_threshold=1.0, preferred_speed=30.0):
+        self.world = world
+        self.vehicle = vehicle
+        self.map = world.get_map()
+        self.grp = GlobalRoutePlanner(self.map, resolution)
+        self.route = []
+        self.curr_wp_index = 0
+        self.max_steer = max_steer_degrees
+        self.speed_threshold = speed_threshold
+        self.preferred_speed = preferred_speed
+
+    def plan_to(self, destination):
+        """Plan route from current location to destination location."""
+        start_loc = self.vehicle.get_transform().location
+        self.route = self.grp.trace_route(start_loc, destination)
+        self.curr_wp_index = 0
+
+        # Optional: visualize route in simulation
+        for wp, _ in self.route:
+            self.world.debug.draw_string(
+                wp.transform.location, '^', draw_shadow=False,
+                color=carla.Color(0, 255, 0), life_time=30.0, persistent_lines=True
+            )
+
+    def maintain_speed(self, speed):
+        """Simple proportional speed control."""
+        if speed >= self.preferred_speed:
+            return 0.0
+        elif speed < self.preferred_speed - self.speed_threshold:
+            return 0.9
+        else:
+            return 0.4
+
+    def get_angle_to_next_waypoint(self):
+        """Compute angle between vehicle and current target waypoint."""
+        if not self.route or self.curr_wp_index >= len(self.route):
+            return 0.0
+
+        tf = self.vehicle.get_transform()
+        loc = tf.location
+        wp_loc = self.route[self.curr_wp_index][0].transform.location
+
+        dx = wp_loc.x - loc.x
+        dy = wp_loc.y - loc.y
+        direction = (dx / math.hypot(dx, dy), dy / math.hypot(dx, dy))
+        forward = tf.get_forward_vector()
+
+        return math.degrees(math.atan2(direction[1], direction[0]) - math.atan2(forward.y, forward.x))
+
+    def update_waypoint_index(self, distance_threshold=5.0):
+        """Advance to the next waypoint if close enough to the current."""
+        while self.curr_wp_index < len(self.route):
+            wp_loc = self.route[self.curr_wp_index][0].transform.location
+            distance = self.vehicle.get_transform().location.distance(wp_loc)
+            if distance >= distance_threshold:
+                break
+            self.curr_wp_index += 1
+
+    def run_step(self):
+        """Compute control command (throttle, steer) to follow the route."""
+        if not self.route or self.curr_wp_index >= len(self.route):
+            return carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0)
+
+        self.update_waypoint_index()
+
+        angle = self.get_angle_to_next_waypoint()
+        if angle < -300: angle += 360
+        elif angle > 300: angle -= 360
+
+        steer = max(min(angle, self.max_steer), -self.max_steer) / 75.0
+
+        v = self.vehicle.get_velocity()
+        speed = 3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2)
+        throttle = self.maintain_speed(speed)
+       
+
+        return carla.VehicleControl(throttle=throttle, steer=steer, brake=0.0)
 
 class World:
     def __init__(self, carla_world, args):
@@ -341,10 +431,57 @@ class World:
         if self.camera_sensor: self.camera_sensor.destroy()
         if self.player: self.player.destroy()
 
-def lane_check(world):
+def lane_check_2(world):
     wp = world.world.get_map().get_waypoint(world.player.get_location())
     return wp.left_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken] or \
            wp.right_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken]
+
+def lane_check(world, debug=True):
+    import carla
+
+    vehicle_location = world.player.get_location()
+    carla_world = world.world  # Access the actual carla.World
+    carla_map = carla_world.get_map()
+    waypoint = carla_map.get_waypoint(vehicle_location, project_to_road=True, lane_type=carla.LaneType.Driving)
+
+    # Extended valid types
+    valid_types = {
+        carla.LaneMarkingType.Solid,
+        carla.LaneMarkingType.Broken,
+        carla.LaneMarkingType.SolidSolid,
+        carla.LaneMarkingType.BrokenBroken,
+        carla.LaneMarkingType.BrokenSolid,
+        carla.LaneMarkingType.SolidBroken
+    }
+
+    left_marking = waypoint.left_lane_marking
+    right_marking = waypoint.right_lane_marking
+
+    left_valid = left_marking is not None and left_marking.type in valid_types
+    right_valid = right_marking is not None and right_marking.type in valid_types
+
+    # Log issues
+    if not left_valid:
+        reason = "missing" if left_marking is None else f"type={left_marking.type}"
+        print(f"[LaneCheck] Left lane marking invalid: {reason}")
+
+    if not right_valid:
+        reason = "missing" if right_marking is None else f"type={right_marking.type}"
+        print(f"[LaneCheck] Right lane marking invalid: {reason}")
+
+    # Visual Debug
+    if debug:
+        carla_world.debug.draw_string(
+            vehicle_location + carla.Location(z=2.5),
+            f"Left: {left_marking.type if left_marking else 'None'} | Right: {right_marking.type if right_marking else 'None'}",
+            life_time=2.0,
+            color=carla.Color(255, 0, 0)
+        )
+
+    return left_valid and right_valid
+
+
+
 def get_upcoming_curvature(world, player, lookahead=30):
     waypoints, current_wp = [], world.get_map().get_waypoint(player.get_location())
     for _ in range(lookahead):
@@ -378,6 +515,7 @@ def game_loop(args, client):
         display = pygame.display.get_surface()
         font = pygame.font.Font(pygame.font.get_default_font(), 28)
         world = World(client.get_world(), args)
+        world_sim =client.get_world()
         world.world.set_weather(args.weather)
         scenario_manager = ScenarioManager(world)
 
@@ -387,7 +525,9 @@ def game_loop(args, client):
         target_speed_kph, last_set_speed_kph = 0, 35.0
         p_key_press_time, propilot_toggled_this_press = None, False
         clock = pygame.time.Clock()
-
+        navigator = WaypointNavigator(world.world, world.player)
+        
+        
         while True:
             clock.tick(60)
             keys = pygame.key.get_pressed()
@@ -440,6 +580,7 @@ def game_loop(args, client):
                 adas_state = ADAS_State.HANDS_OFF
             elif adas_state == ADAS_State.HANDS_OFF and (not lane_check(world) or upcoming_curvature >= cornering_threshold):
                 adas_state = ADAS_State.ACTIVE
+                navigator.route = []  # Reset the route when exiting HANDS_OFF mode
             
             if adas_state in [ADAS_State.ACTIVE, ADAS_State.HANDS_OFF] and current_speed_kph < 0.5:
                 adas_state, last_set_speed_kph = ADAS_State.STANDBY, target_speed_kph
@@ -447,6 +588,7 @@ def game_loop(args, client):
             throttle, brake, steer = manual_control.throttle, manual_control.brake, manual_control.steer
             
             if adas_state in [ADAS_State.ACTIVE, ADAS_State.HANDS_OFF]:
+                # WaypointNavigator(world_sim, lead_vehicle)
                 final_target_kph = get_target_speed_from_curvature(upcoming_curvature, target_speed_kph)
                 lead_vehicle = get_lead_vehicle(world.player, world.world)
                 if lead_vehicle:
@@ -455,12 +597,17 @@ def game_loop(args, client):
                 throttle, brake = (max(0, control_signal), max(0, -control_signal))
 
             if adas_state == ADAS_State.HANDS_OFF:
-                waypoints = [world.world.get_map().get_waypoint(world.player.get_location())]
-                for _ in range(50):
-                    next_wps = waypoints[-1].next(2.0)
-                    if next_wps: waypoints.append(next_wps[0])
-                    else: break
-                steer = stanley.run_step(world.player, waypoints)
+                # Re-plan route if needed
+                if not navigator.route or navigator.curr_wp_index >= len(navigator.route):
+                    destination = world.player.get_location()
+                    destination.x += 50.0  # Simple forward projection (or pick a smarter point)
+                    navigator.plan_to(destination)
+
+                nav_control = navigator.run_step()
+                throttle = nav_control.throttle
+                steer = nav_control.steer
+                brake = nav_control.brake
+            
             
             world.player.apply_control(carla.VehicleControl(throttle=throttle, steer=steer, brake=brake))
             

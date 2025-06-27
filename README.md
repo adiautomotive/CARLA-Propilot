@@ -97,16 +97,16 @@ python Propilot_simulator.py --host 127.0.0.1 --port 2000 --width 1280 --height 
 
 ## Controls
 
-| Action                  | Keyboard Control              | Logitech G29 Control |
-| ----------------------- | ----------------------------- | -------------------- |
-| **Steering** | `Left/Right Arrow Keys`       | Steering Wheel       |
-| **Throttle / Brake** | `Up/Down Arrow Keys`          | Accelerator / Brake Pedals |
-| **Toggle ProPILOT** | Hold `P` key for 1.5s         | *Not mapped* |
-| **Set / Decrease Speed**| `Down Arrow` (in STANDBY)     | *Not mapped* |
-| **Resume / Increase Speed**| `Up Arrow` (in STANDBY)    | *Not mapped* |
-| **Cancel ADAS** | `X` key                       | Brake Pedal          |
-| **Next Scenario** | `N` key                       | *Not mapped* |
-| **Exit** | `ESC` key                     | -                    |
+| Action                  | Keyboard Control              | Logitech G29 Control | Logitech G920 Control |
+| ----------------------- | ----------------------------- | -------------------- | -------------------- |
+| **Steering** | `Left/Right Arrow Keys`       | Steering Wheel       | Steering Wheel       |
+| **Throttle / Brake** | `Up/Down Arrow Keys`          | Accelerator / Brake Pedals | Accelerator / Brake Pedals |
+| **Toggle ProPILOT** | Hold `P` key for 1.5s         | *Not mapped* |  Button `A` |
+| **Set / Decrease Speed**| `Down Arrow` (in STANDBY)     | *Not mapped* |  D-pad `Down Arrow`  |
+| **Resume / Increase Speed**| `Up Arrow` (in STANDBY)    | *Not mapped* |   D-pad `Up Arrow` |
+| **Cancel ADAS** | `X` key                       | Brake Pedal          |  Brake Pedal or Button `X`  |
+| **Next Scenario** | `N` key                       | *Not mapped* |  Button `Y` |
+| **Exit** | `ESC` key                     | -                    |  *Not mapped* |
 
 ## License
 
