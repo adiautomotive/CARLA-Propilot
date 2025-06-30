@@ -7,7 +7,7 @@ Done: No
 
 ## ✅ This Week’s Progress
 
-- [x]  Joystick Mapping([see details](https://github.com/adiautomotive/CARLA-Propilot/tree/devel_dara) )
+- [x]  Joystick Mapping([see details](https://github.com/adiautomotive/CARLA-Propilot/tree/devel_dara?tab=readme-ov-file#controls) )
 - [x]  Display Image modification (BGRA → RGB)
 - [x]  Tested my WaypointNAV code with the ProPiLOT LKA
     - [x]  Tested ACC accuracy
