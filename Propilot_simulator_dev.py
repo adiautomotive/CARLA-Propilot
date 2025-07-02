@@ -139,7 +139,7 @@ class DualControl(object):
         self._steer_cache = 0.0
         self._joystick = None
         if pygame.joystick.get_count() > 0:
-            self._joystick = pygame.joystick.Joystick(1)
+            self._joystick = pygame.joystick.Joystick(0)
             self._joystick.init()
             print("Detected Joystick: %s" % self._joystick.get_name())
 
@@ -436,7 +436,7 @@ def lane_check_2(world):
     return wp.left_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken] or \
            wp.right_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken]
 
-def lane_check(world, debug=True):
+def lane_check_marking(world, debug=True):
     import carla
 
     vehicle_location = world.player.get_location()
@@ -479,6 +479,20 @@ def lane_check(world, debug=True):
         )
 
     return left_valid and right_valid
+
+
+def lane_check(world):
+    wp = world.world.get_map().get_waypoint(
+        world.player.get_location(),
+        project_to_road=True,
+        lane_type=carla.LaneType.Any
+    )
+
+    # Check that it's a driving lane and not any of the restricted types
+    return (
+        bool(wp.lane_type & carla.LaneType.Driving) and
+        not bool(wp.lane_type & (carla.LaneType.Sidewalk | carla.LaneType.Shoulder | carla.LaneType.Border | carla.LaneType.Parking))
+    )
 
 
 
@@ -526,12 +540,13 @@ def game_loop(args, client):
         p_key_press_time, propilot_toggled_this_press = None, False
         clock = pygame.time.Clock()
         navigator = WaypointNavigator(world.world, world.player)
-        
+     
         
         while True:
             clock.tick(60)
             keys = pygame.key.get_pressed()
             current_speed_kph = np.linalg.norm([world.player.get_velocity().x, world.player.get_velocity().y, world.player.get_velocity().z]) * 3.6
+            
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE): return
@@ -575,10 +590,12 @@ def game_loop(args, client):
                 warning_text, warning_end_time = "System Standby: Brake Applied", pygame.time.get_ticks() + 2000
 
             upcoming_curvature = get_upcoming_curvature(world.world, world.player)
-            cornering_threshold = 1.5 
+            cornering_threshold = 1.8 
             if adas_state == ADAS_State.ACTIVE and lane_check(world) and upcoming_curvature < cornering_threshold:
+            # if adas_state == ADAS_State.ACTIVE and lane_check(world):
                 adas_state = ADAS_State.HANDS_OFF
             elif adas_state == ADAS_State.HANDS_OFF and (not lane_check(world) or upcoming_curvature >= cornering_threshold):
+            # elif adas_state == ADAS_State.HANDS_OFF and not lane_check(world):
                 adas_state = ADAS_State.ACTIVE
                 navigator.route = []  # Reset the route when exiting HANDS_OFF mode
             
@@ -603,6 +620,7 @@ def game_loop(args, client):
                     destination.x += 50.0  # Simple forward projection (or pick a smarter point)
                     navigator.plan_to(destination)
 
+                navigator.preferred_speed = final_target_kph
                 nav_control = navigator.run_step()
                 throttle = nav_control.throttle
                 steer = nav_control.steer
@@ -653,6 +671,7 @@ def main():
     argparser.add_argument('--height', default=720, type=int, help='Window height')
     argparser.add_argument('--filter', default='vehicle.*', help='Player vehicle filter')
     argparser.add_argument('--map', default='Town10HD_Opt', help='Map to load')
+    # argparser.add_argument('--map', default='Town04', help='Map to load')
     args = argparser.parse_args()
     try:
         pygame.init()
