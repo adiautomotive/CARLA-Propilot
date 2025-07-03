@@ -166,29 +166,18 @@ class DualControl(object):
 
     def _parse_wheel(self):
         numAxes = self._joystick.get_numaxes()
-        ButtonKeys = self._joystick.get_numbuttons()
         jsInputs = [float(self._joystick.get_axis(i)) for i in range(numAxes)]
-        jsButton = [float(self._joystick.get_button(i)) for i in range(ButtonKeys)]
-        steer_index = 3 #0
-        throttle_index = 1 #1
-        brake_index = 2
         
-        steerCmd = 1.0 * math.tan(1.1 * jsInputs[steer_index])
+        steerCmd = 1.0 * math.tan(1.1 * jsInputs[0])
         throttleCmd = 0.0
-        if jsInputs[throttle_index] < 0.9:
-            throttleCmd = jsInputs[throttle_index]
-            # throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_index] + 1.4) - 1.2) / 0.92
-            # if throttleCmd < 0: throttleCmd = 0.0
-            # elif throttleCmd > 1: throttleCmd = 1.0
-        # if jsInputs[throttle_index] < 1.9:
-        #     throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_index] + 1.4) - 1.2) / 0.92
-        #     if throttleCmd < 0: throttleCmd = 0.0
-        #     elif throttleCmd > 1: throttleCmd = 1.0
+        if jsInputs[1] < 0.9:
+            throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[1] + 1.4) - 1.2) / 0.92
+            if throttleCmd < 0: throttleCmd = 0.0
+            elif throttleCmd > 1: throttleCmd = 1.0
 
         brakeCmd = 0.0
-        if jsInputs[brake_index] < -1.9:
+        if jsInputs[2] < 0.9:
             brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[2] + 1.4) - 1.2) / 0.92
-            # brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * max(0,jsInputs[2]) + 1.4) - 1.2) / 0.92
             if brakeCmd < 0: brakeCmd = 0.0
             elif brakeCmd > 1: brakeCmd = 1.0
         
@@ -320,7 +309,7 @@ class ScenarioManager:
             
             vehicle.apply_control(carla.VehicleControl(throttle=throttle, steer=steer, brake=brake))
 
-sys.path.append('/home/jesudara/carla_dev/carla/PythonAPI/carla')
+sys.path.append('C:/Users/adigo/Desktop/CARLAv15/PythonAPI/carla')
 from agents.navigation.global_route_planner import GlobalRoutePlanner
 
 class WaypointNavigator:
@@ -670,8 +659,8 @@ def main():
     argparser.add_argument('--width', default=1280, type=int, help='Window width')
     argparser.add_argument('--height', default=720, type=int, help='Window height')
     argparser.add_argument('--filter', default='vehicle.*', help='Player vehicle filter')
-    argparser.add_argument('--map', default='Town10HD_Opt', help='Map to load')
-    # argparser.add_argument('--map', default='Town04', help='Map to load')
+    # argparser.add_argument('--map', default='Town10HD_Opt', help='Map to load')
+    argparser.add_argument('--map', default='Town04', help='Map to load')
     args = argparser.parse_args()
     try:
         pygame.init()

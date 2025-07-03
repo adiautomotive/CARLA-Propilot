@@ -65,7 +65,8 @@ class StartMenu(tk.Frame):
         self.controller = controller
 
         # === Background Image ===
-        bg_image = Image.open("/home/jesudara/carla_dev/carla/ADASProject/dev/ADAS_Simulator/images/Meeting-Critical.jpg")
+        icon_dir="C:/Users/adigo/Desktop/CARLAv15/scripts/CARLA-Propilot/main/images/"
+        bg_image = Image.open(icon_dir + "Meeting-Critical.jpg")
         self.bg_photo = ImageTk.PhotoImage(bg_image)
         tk.Label(self, image=self.bg_photo).place(relwidth=1, relheight=1)
 
@@ -265,7 +266,7 @@ class DashboardScreen(tk.Frame):
         self.propilot_timer = 0
 
         # Load fuel icon
-        icon_dir="/home/jesudara/carla_dev/carla/ADASProject/dev/ADAS_Simulator/images/"
+        icon_dir="C:/Users/adigo/Desktop/CARLAv15/scripts/CARLA-Propilot/main/images/"
         fuel_image = Image.open(icon_dir + "icons/gas-pump-512.ico")
         fuel_image = fuel_image.resize((20, 20), Image.LANCZOS)
         self.fuel_icon = ImageTk.PhotoImage(fuel_image)
