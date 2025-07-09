@@ -1,7 +1,7 @@
 """
 CARLA LKA and ACC Testbed with ProPILOT-style State Machine
 
-Authors: Adithya Govindarajan, Pradeepa Hari
+Authors: Adithya Govindarajan, Pradeepa Hari, Jesudara
 
 - Manual Control: Arrow keys or Logitech G29 Steering Wheel
 - ProPILOT Switch: Hold 'P' key for 1.5s (OFF <-> STANDBY)
@@ -24,7 +24,11 @@ import argparse
 from enum import Enum
 import math
 import sys
-# Add CARLA PythonAPI path (Update this path if needed)
+from simulator_AD_test import ADASSimulatorGUI  # Import the GUI class from the simulator_AD_test module
+from evdev import ecodes
+from utils import (
+    setup_force_feedback, spawn_minimap_camera, process_minimap_image, draw_vehicle_marker_on_minimap
+)
 
 # ==============================================================================
 # -- ADAS State Machine & Pre-sim GUI ------------------------------------------
@@ -138,6 +142,7 @@ class DualControl(object):
         self._control = carla.VehicleControl()
         self._steer_cache = 0.0
         self._joystick = None
+        
         if pygame.joystick.get_count() > 0:
             self._joystick = pygame.joystick.Joystick(0)
             self._joystick.init()
@@ -146,6 +151,7 @@ class DualControl(object):
     def parse_input(self, keys, milliseconds):
         if self._joystick:
             self._parse_wheel()
+            # self._parse_keys(keys, milliseconds)
         else:
             self._parse_keys(keys, milliseconds)
         return self._control
@@ -167,17 +173,22 @@ class DualControl(object):
     def _parse_wheel(self):
         numAxes = self._joystick.get_numaxes()
         jsInputs = [float(self._joystick.get_axis(i)) for i in range(numAxes)]
+
+        ## FAUTECH 
+        steer_idx = 0
+        throttle_idx = 2
+        brake_idx = 5
         
-        steerCmd = 1.0 * math.tan(1.1 * jsInputs[0])
+        steerCmd = 1.0 * math.tan(1.1 * jsInputs[steer_idx])
         throttleCmd = 0.0
-        if jsInputs[1] < 0.9:
-            throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[1] + 1.4) - 1.2) / 0.92
+        if jsInputs[throttle_idx] < 0.9:
+            throttleCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[throttle_idx] + 1.4) - 1.2) / 0.92
             if throttleCmd < 0: throttleCmd = 0.0
             elif throttleCmd > 1: throttleCmd = 1.0
 
         brakeCmd = 0.0
-        if jsInputs[2] < 0.9:
-            brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[2] + 1.4) - 1.2) / 0.92
+        if jsInputs[brake_idx] < 0.9:
+            brakeCmd = 1.6 + (2.05 * math.log10(-0.7 * jsInputs[brake_idx] + 1.4) - 1.2) / 0.92
             if brakeCmd < 0: brakeCmd = 0.0
             elif brakeCmd > 1: brakeCmd = 1.0
         
@@ -221,7 +232,7 @@ class StanleyController:
         return np.clip(heading_error + np.arctan2(dynamic_k * cte, self.k_soft + v_mps), -1.0, 1.0)
 class ScenarioManager:
     def __init__(self, world_obj):
-        self.world, self.scenarios = world_obj, [("Baseline", self.setup_baseline), ("Degraded Lanes", self.setup_degraded), ("Cut-in Vehicle", self.setup_cut_in), ("Stop-and-Go", self.setup_stop_go)]
+        self.world, self.scenarios = world_obj, [("Baseline", self.setup_baseline), ("Degraded Lanes", self.setup_degraded_index), ("Cut-in Vehicle", self.setup_cut_in), ("Stop-and-Go", self.setup_stop_go)]
         self.current_scenario_index, self.scenario_actors = -1, []
         self.stop_go_state, self.stop_go_timer = None, 0
         self.lead_vehicle, self.cut_in_vehicle, self.cut_in_state = None, None, None
@@ -255,6 +266,16 @@ class ScenarioManager:
     def setup_degraded(self):
         for sp in self.world.map.get_spawn_points():
             if self.world.map.get_waypoint(sp.location).is_intersection: self.world.player.set_transform(sp); return
+    def setup_degraded_index(self, spawn_index=307):
+        spawn_points = self.world.map.get_spawn_points()
+        
+        if 0 <= spawn_index < len(spawn_points):
+            selected_sp = spawn_points[spawn_index]
+            self.world.player.set_transform(selected_sp)
+            print(f"Vehicle spawned at index {spawn_index}: {selected_sp.location}")
+        else:
+            print(f"[ERROR] Invalid spawn index: {spawn_index}. Total available: {len(spawn_points)}")
+
     def setup_cut_in(self):
         bp_lib, player_wp = self.world.world.get_blueprint_library(), self.world.map.get_waypoint(self.world.player.get_location())
         if player_wp.next(40.0):
@@ -324,14 +345,32 @@ class WaypointNavigator:
         self.max_steer = max_steer_degrees
         self.speed_threshold = speed_threshold
         self.preferred_speed = preferred_speed
+        self.in_lane_change = False
+
+    def is_lane_drivable(self, waypoint):
+        return waypoint.lane_type == carla.LaneType.Driving
+
+    def get_closest_drivable_lane(self, location):
+        waypoint = self.map.get_waypoint(location, project_to_road=True, lane_type=carla.LaneType.Any)
+        if self.is_lane_drivable(waypoint):
+            return waypoint
+        return self.map.get_waypoint(location, project_to_road=True, lane_type=carla.LaneType.Driving)
 
     def plan_to(self, destination):
-        """Plan route from current location to destination location."""
-        start_loc = self.vehicle.get_transform().location
-        self.route = self.grp.trace_route(start_loc, destination)
+        """Plan route from current or closest drivable lane to destination."""
+        current_loc = self.vehicle.get_transform().location
+        start_wp = self.map.get_waypoint(current_loc, project_to_road=True, lane_type=carla.LaneType.Any)
+
+        if not self.is_lane_drivable(start_wp):
+            self.in_lane_change = True
+            start_wp = self.get_closest_drivable_lane(current_loc)
+        else:
+            self.in_lane_change = False
+
+        self.route = self.grp.trace_route(start_wp.transform.location, destination)
         self.curr_wp_index = 0
 
-        # Optional: visualize route in simulation
+        # Visualize route
         for wp, _ in self.route:
             self.world.debug.draw_string(
                 wp.transform.location, '^', draw_shadow=False,
@@ -339,16 +378,17 @@ class WaypointNavigator:
             )
 
     def maintain_speed(self, speed):
-        """Simple proportional speed control."""
-        if speed >= self.preferred_speed:
+        """Gradually adjust speed depending on lane-change state."""
+        target_speed = 10.0 if self.in_lane_change else self.preferred_speed
+
+        if speed >= target_speed:
             return 0.0
-        elif speed < self.preferred_speed - self.speed_threshold:
-            return 0.9
+        elif speed < target_speed - self.speed_threshold:
+            return 0.8
         else:
-            return 0.4
+            return 0.3
 
     def get_angle_to_next_waypoint(self):
-        """Compute angle between vehicle and current target waypoint."""
         if not self.route or self.curr_wp_index >= len(self.route):
             return 0.0
 
@@ -364,7 +404,6 @@ class WaypointNavigator:
         return math.degrees(math.atan2(direction[1], direction[0]) - math.atan2(forward.y, forward.x))
 
     def update_waypoint_index(self, distance_threshold=5.0):
-        """Advance to the next waypoint if close enough to the current."""
         while self.curr_wp_index < len(self.route):
             wp_loc = self.route[self.curr_wp_index][0].transform.location
             distance = self.vehicle.get_transform().location.distance(wp_loc)
@@ -372,8 +411,13 @@ class WaypointNavigator:
                 break
             self.curr_wp_index += 1
 
+        # Check if lane change is complete
+        if self.in_lane_change:
+            wp = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=carla.LaneType.Any)
+            if self.is_lane_drivable(wp):
+                self.in_lane_change = False  # Done changing lanes
+
     def run_step(self):
-        """Compute control command (throttle, steer) to follow the route."""
         if not self.route or self.curr_wp_index >= len(self.route):
             return carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0)
 
@@ -388,7 +432,6 @@ class WaypointNavigator:
         v = self.vehicle.get_velocity()
         speed = 3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2)
         throttle = self.maintain_speed(speed)
-       
 
         return carla.VehicleControl(throttle=throttle, steer=steer, brake=0.0)
 
@@ -408,6 +451,27 @@ class World:
             self.camera_sensor = self.world.spawn_actor(camera_bp, camera_transform, attach_to=self.player)
             weak_self = weakref.ref(self)
             self.camera_sensor.listen(lambda image: World._parse_image(weak_self, image))
+            # Store in GUI (this assumes your ADASSimulatorGUI instance is available)
+
+            ## Init MinMap
+            self.minimap_surface = None
+            self.minimap_center = self.map.get_spawn_points()[0].location  # if static
+            self.minimap_extent = (300, 300)
+            camera_bp_minimap = blueprint_library.find('sensor.camera.rgb')
+            camera_bp_minimap.set_attribute('image_size_x', '160')
+            camera_bp_minimap.set_attribute('image_size_y', '90')
+            camera_bp_minimap.set_attribute('fov', '70')
+
+            map_center = self.minimap_center
+            cam_location_minimap = carla.Location(x=map_center.x, y=map_center.y, z=150)
+            cam_rotation_minimap = carla.Rotation(pitch=-90)
+            cam_transform_minimap = carla.Transform(cam_location_minimap, cam_rotation_minimap)
+
+            minimap_sensor = self.world.spawn_actor(camera_bp_minimap, cam_transform_minimap)
+            minimap_sensor.listen(lambda image: World._parse_minimap(weakref.ref(self), image))
+
+            self.minimap_sensor = minimap_sensor
+            
         except Exception as e: self.destroy(); raise e
     @staticmethod
     def _parse_image(weak_self, image):
@@ -415,8 +479,32 @@ class World:
         if not self: return
         array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
         self.surface = pygame.surfarray.make_surface(array[:, :, :3][:, :, ::-1].swapaxes(0, 1)) # BGRA → RGB
+    def _parse_minimap(weak_self, image):
+        self = weak_self()
+        if not self: return
+        array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
+        minimap_image = array[:, :, :3][:, :, ::-1]  # BGRA → RGB
+
+        surface = pygame.surfarray.make_surface(minimap_image.swapaxes(0, 1))
+
+        # Draw red marker
+        if self.player and self.minimap_center:
+            ego_loc = self.player.get_location()
+            draw_vehicle_marker_on_minimap(
+                surface,
+                ego_loc,
+                self.minimap_center,
+                self.minimap_extent,
+                surface.get_size()
+            )
+        self.minimap_surface = surface
     def render(self, display):
         if self.surface: display.blit(self.surface, (0, 0))
+        if self.minimap_surface:
+            minimap_w, minimap_h = self.minimap_surface.get_size()
+            x = display.get_width() - minimap_w - 10
+            y = display.get_height() - minimap_h - 10
+            display.blit(self.minimap_surface, (x, y))
     def destroy(self):
         if self.camera_sensor: self.camera_sensor.destroy()
         if self.player: self.player.destroy()
@@ -426,16 +514,39 @@ def lane_check_2(world):
     return wp.left_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken] or \
            wp.right_lane_marking.type in [carla.LaneMarkingType.Solid, carla.LaneMarkingType.Broken]
 
-def lane_check_marking(world, debug=True):
-    import carla
+# def lane_check_marking(world, debug=True):
+# def lane_check_combined(world, debug=True):
+def lane_check(world, debug=False):
+    # import carla
 
     vehicle_location = world.player.get_location()
-    carla_world = world.world  # Access the actual carla.World
+    carla_world = world.world
     carla_map = carla_world.get_map()
-    waypoint = carla_map.get_waypoint(vehicle_location, project_to_road=True, lane_type=carla.LaneType.Driving)
+    
+    # Get waypoint with full lane info
+    waypoint = carla_map.get_waypoint(
+        vehicle_location,
+        project_to_road=True,
+        lane_type=carla.LaneType.Any  # Allow all to check lane type
+    )
 
-    # Extended valid types
-    valid_types = {
+    # === Lane Type Validation ===
+    valid_lane = (
+        bool(waypoint.lane_type & carla.LaneType.Driving) and
+        not bool(waypoint.lane_type & (
+            carla.LaneType.Sidewalk |
+            carla.LaneType.Shoulder |
+            carla.LaneType.Border |
+            carla.LaneType.Parking
+        ))
+    )
+
+    if not valid_lane:
+        print(f"[LaneCheck] Invalid lane type: {waypoint.lane_type}")
+        return False
+
+    # === Lane Marking Validation ===
+    valid_marking_types = {
         carla.LaneMarkingType.Solid,
         carla.LaneMarkingType.Broken,
         carla.LaneMarkingType.SolidSolid,
@@ -447,10 +558,9 @@ def lane_check_marking(world, debug=True):
     left_marking = waypoint.left_lane_marking
     right_marking = waypoint.right_lane_marking
 
-    left_valid = left_marking is not None and left_marking.type in valid_types
-    right_valid = right_marking is not None and right_marking.type in valid_types
+    left_valid = left_marking is not None and left_marking.type in valid_marking_types
+    right_valid = right_marking is not None and right_marking.type in valid_marking_types
 
-    # Log issues
     if not left_valid:
         reason = "missing" if left_marking is None else f"type={left_marking.type}"
         print(f"[LaneCheck] Left lane marking invalid: {reason}")
@@ -459,31 +569,16 @@ def lane_check_marking(world, debug=True):
         reason = "missing" if right_marking is None else f"type={right_marking.type}"
         print(f"[LaneCheck] Right lane marking invalid: {reason}")
 
-    # Visual Debug
+    # === Optional Debug Output ===
     if debug:
         carla_world.debug.draw_string(
             vehicle_location + carla.Location(z=2.5),
-            f"Left: {left_marking.type if left_marking else 'None'} | Right: {right_marking.type if right_marking else 'None'}",
+            f"Lane: {waypoint.lane_type} | Left: {left_marking.type if left_marking else 'None'} | Right: {right_marking.type if right_marking else 'None'}",
             life_time=2.0,
             color=carla.Color(255, 0, 0)
         )
 
-    return left_valid and right_valid
-
-
-def lane_check(world):
-    wp = world.world.get_map().get_waypoint(
-        world.player.get_location(),
-        project_to_road=True,
-        lane_type=carla.LaneType.Any
-    )
-
-    # Check that it's a driving lane and not any of the restricted types
-    return (
-        bool(wp.lane_type & carla.LaneType.Driving) and
-        not bool(wp.lane_type & (carla.LaneType.Sidewalk | carla.LaneType.Shoulder | carla.LaneType.Border | carla.LaneType.Parking))
-    )
-
+    return valid_lane and left_valid and right_valid
 
 
 def get_upcoming_curvature(world, player, lookahead=30):
@@ -523,6 +618,8 @@ def game_loop(args, client):
         world.world.set_weather(args.weather)
         scenario_manager = ScenarioManager(world)
 
+        ff_device, ff_effect_id = setup_force_feedback()
+
         controller = DualControl()
         stanley, acc_pid = StanleyController(), ACCController()
         adas_state = ADAS_State.OFF
@@ -530,17 +627,52 @@ def game_loop(args, client):
         p_key_press_time, propilot_toggled_this_press = None, False
         clock = pygame.time.Clock()
         navigator = WaypointNavigator(world.world, world.player)
-     
-        
+        vehicle_state =args.vehicle_state
+
+
+
+        # from utils import (spawn_minimap_camera, process_minimap_image, draw_vehicle_marker_on_minimap)
+        # ego_vehicle = world.player
+        # MINIMAP_SIZE = (160, 90)
+        # MINIMAP_POS = (1750, 980)
+        # MAP_EXTENT = (300, 300)
+        # # MINIMAP_SIZE = (128, 128)          # pixels
+        # # MAP_EXTENT = (200, 200)            # meters (width, height covered in mini-map)
+        # screen_width, screen_height = display.get_size()
+        # # MINIMAP_POS = (screen_width - MINIMAP_SIZE[0] - 10, screen_height - MINIMAP_SIZE[1] - 10)
+
+        # #Spawn minimap camera
+        # minimap_cam, minimap_center = spawn_minimap_camera(world.world, world.map)
+        # minimap_image = np.zeros((MINIMAP_SIZE[1], MINIMAP_SIZE[0], 3), dtype=np.uint8)
+
+
+        # def minimap_callback(image):
+        #     global minimap_image
+        #     minimap_image = process_minimap_image(image)
+
+        # minimap_cam.listen(minimap_callback)
+
+
+
         while True:
+            if ff_device and ff_effect_id is not None:
+                try:
+                    ff_device.write(ecodes.EV_FF, ff_effect_id, 1)
+                except Exception as e:
+                    print(f"[WARN] FF error: {e}")
             clock.tick(60)
             keys = pygame.key.get_pressed()
             current_speed_kph = np.linalg.norm([world.player.get_velocity().x, world.player.get_velocity().y, world.player.get_velocity().z]) * 3.6
-            
+            vehicle_state.current_speed_kph = current_speed_kph
+            vehicle_state.target_speed_kph = target_speed_kph
+            vehicle_state.last_set_speed_kph = last_set_speed_kph
+            vehicle_state.adas_state = adas_state
+          
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE): return
                 elif event.type == pygame.JOYBUTTONDOWN:
+                    # FAUTECH 
                     if event.button == 0:
                         if p_key_press_time is None: p_key_press_time = pygame.time.get_ticks()
                     if event.button == 2:
@@ -580,7 +712,7 @@ def game_loop(args, client):
                 warning_text, warning_end_time = "System Standby: Brake Applied", pygame.time.get_ticks() + 2000
 
             upcoming_curvature = get_upcoming_curvature(world.world, world.player)
-            cornering_threshold = 1.8 
+            cornering_threshold = 1.5 
             if adas_state == ADAS_State.ACTIVE and lane_check(world) and upcoming_curvature < cornering_threshold:
             # if adas_state == ADAS_State.ACTIVE and lane_check(world):
                 adas_state = ADAS_State.HANDS_OFF
@@ -621,10 +753,21 @@ def game_loop(args, client):
             
             world.render(display)
             draw_adas_hud(display, font, adas_state, current_speed_kph, target_speed_kph, warning_text, warning_end_time, scenario_manager)
+            # Render minimap image with vehicle marker
+            # minimap_surface = pygame.surfarray.make_surface(minimap_image.swapaxes(0, 1))
+            # draw_vehicle_marker_on_minimap(
+            #     minimap_surface,
+            #     ego_vehicle.get_location(),
+            #     minimap_center,
+            #     MAP_EXTENT,
+            #     MINIMAP_SIZE
+            # )
+            # display.blit(minimap_surface, MINIMAP_POS)
             pygame.display.flip()
     finally:
         if world: world.destroy()
         if scenario_manager: scenario_manager.cleanup()
+        
 
 def draw_adas_hud(display, font, state, current_speed, target_speed, warning_text, warning_end_time, scenario_manager):
     width = display.get_width()
@@ -653,34 +796,41 @@ def draw_adas_hud(display, font, state, current_speed, target_speed, warning_tex
         warn_rect = warn_surface.get_rect(center=(width/2, 50))
         display.blit(warn_surface, warn_rect)
 
-def main():
+def main(self, settings):
     argparser = argparse.ArgumentParser(description='CARLA LKA & ACC Testbed')
-    argparser.add_argument('--host', default='141.215.211.243', help='IP of the host server')
+    argparser.add_argument('--host', default='127.0.0.1', help='IP of the host server')
     argparser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')
-    argparser.add_argument('--width', default=1280, type=int, help='Window width')
-    argparser.add_argument('--height', default=720, type=int, help='Window height')
+    argparser.add_argument('--width', default=1920, type=int, help='Window width')
+    argparser.add_argument('--height', default=1080, type=int, help='Window height')
     argparser.add_argument('--filter', default='vehicle.*', help='Player vehicle filter')
     # argparser.add_argument('--map', default='Town10HD_Opt', help='Map to load')
     argparser.add_argument('--map', default='Town04', help='Map to load')
     args = argparser.parse_args()
+    from dashboard_state import VehicleState
     try:
         pygame.init()
         pygame.font.init()
         display = pygame.display.set_mode((args.width, args.height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+
         client = carla.Client(args.host, args.port)
         client.set_timeout(10.0)
+        
         
         print("Loading map: %s..." % args.map)
         client.load_world(args.map)
         print("Map loaded.")
         
-        menu = SettingsMenu(client, args.width, args.height)
-        settings = menu.run(display)
-
+        
         if settings:
-            args.player_filter = settings['player_filter']
-            args.lead_filter = settings['lead_filter']
+            args = argparse.Namespace(**settings)
+            args.width = 1920
+            args.height = 1080
+            args.player_filter = settings['vehicle_model']
+            print(args.player_filter)
+            args.lead_filter = settings['lead_vehicle_model']
             args.weather = settings['weather']
+            args.gui_ref = self
+            args.vehicle_state = self.vehicle_state
             game_loop(args, client)
         
     except Exception as e:
