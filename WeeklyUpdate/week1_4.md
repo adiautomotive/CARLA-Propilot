@@ -21,7 +21,7 @@ Done: No
         - [x]  Design a scenario with degraded lane for LKA POC
 - [x]  Designed the preliminary version of HUD tablet view
     
-    [Screencast from 06-30-2025 02:00:30 PM.webm](Project%20Update%2022ba940cba0e808ab7edca382f6cf7b3/Screencast_from_06-30-2025_020030_PM.webm)
+        ![HUD_VIEW](media/HUD_view.gif)
     
 
 - [x]  Update the preliminary version of HUD tablet view

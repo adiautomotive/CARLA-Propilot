@@ -11,10 +11,10 @@ Done: No
 - [x]  Display Image modification (BGRA → RGB)
 - [x]  Tested my WaypointNAV code with the ProPiLOT LKA
     - [x]  Tested ACC accuracy
-    - [ ]  Tested LKA as WaypointNAV →
-        - [ ]  Speak to Adithya about “lane-check” function
-            - [ ]  Update the lane-check based on Adithya reason
-        - [ ]  Design a scenario with degraded lane for LKA POC
+    - [x]  Tested LKA as WaypointNAV →
+        - [x]  Speak to Adithya about “lane-check” function
+            - [x]  Update the lane-check based on Adithya reason
+        - [x]  Design a scenario with degraded lane for LKA POC
 - [x]  Designed the preliminary version of HUD tablet view
     
     ![HUD_VIEW](media/HUD_view.gif)
