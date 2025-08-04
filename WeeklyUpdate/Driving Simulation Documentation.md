@@ -309,7 +309,7 @@ flowchart LR
 ```
 
 Flowchart for system
-![Flowchart for system](/images/flowchat.png)
+![Flowchart for system](../assert/images/flowchat.png)
 
 ADAS State Flowchart
 ![ADAS State Flowchart ](../assert/images/flowchat2.png)
